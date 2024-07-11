@@ -1,266 +1,235 @@
 # Emission-model-Agriculture_-HN2024
 # Instalar y cargar los paquetes necesarios
-library(lpSolve)
 library(readxl)
+library(dplyr)
+library(tidyr)
 library(ggplot2)
-# Instalar y cargar los paquetes necesarios
 
-library(ggplot2)
+# Cargar los datos desde el archivo Excel
+data <- read_excel("C:/Users/DEES-JULIO/Desktop/GIZ/Agricultura/agricultural_emissions_2000_2020.xlsx")
+View(data)
+GPV <- read_excel("data/Value of Agricultural Production.xls")
 
-# Definir el año inicial y final
+# Preparar los datos
+resultado <- GPV %>%
+  filter(Year >= 2000, Year <= 2020) %>%
+  group_by(Year, Categoría) %>%
+  summarise(total_value = sum(Value, na.rm = TRUE)) %>%
+  arrange(Year, Categoría)
+
+resultado_wide <- resultado %>%
+  pivot_wider(names_from = Categoría, values_from = total_value, names_prefix = "total_value_")
+
+nGPV <- data.frame(resultado_wide)
+View(nGPV)
+
+# Definir las variables del archivo principal
+years <- data$Year
+
+#variables economicas 
+
+export_value <- data$Export_Value
+import_value <- data$Import_Value
+consumer_price_indices <- data$Consumer_Price_Indices
+area_harvested <- data$Area_Harvested
+yield <- data$Yield
+
+
+# Variables activas en el modelos
+
+gross_production_value <- data$Gross_Production_Value
+production_agricultura <- nGPV$total_value_Agricultura
+production_ganaderia <- nGPV$total_value_Ganadería
+
+## Variables de emisiones
+
+emisiones_totales_tierra <- data$Emisiones_Totales_Tierra
+emisiones_ganaderia <- data$Emisiones_Ganadería
+absorciones_ganaderia <- data$Absorciones_Ganadería
+absorciones_tierras_totales <- data$Absorciones_Tierras_Totales
+emisiones_tierra_de_cultivo <- data$Emisiones_Tierra_de_Cultivo
+absorciones_tierra_de_cultivo <- data$Absorciones_Tierra_de_Cultivo
+emisiones_pastizales <- data$Emisiones_Pastizales
+absorciones_pastizales <- data$Absorciones_Pastizales
+emisiones_humedales <- data$Emisiones_Humedales
+absorciones_humedales <- data$Absorciones_Humedales
+emisiones_asentamiento <- data$Emisiones_Asentamiento
+absorciones_asentamientos <- data$Absorciones_Asentamientos
+emisiones_totales <- data$Emisiones_Totales
+absorciones_totales <- data$Absorciones_Totales
+
+# Definir parámetros de simulación
+num_simulaciones <- 1000
 anio_inicio <- 2000
 anio_fin <- 2050
-anios <- anio_inicio:anio_fin
+anios <- seq(anio_inicio, anio_fin, by = 1)
 
-# Crear un data frame para almacenar las trayectorias de emisión y absorción
+# Calcular las tasas de crecimiento promedio
+crecimiento_produccion_agricultura <- mean((production_agricultura[-1] / production_agricultura[-length(production_agricultura)] - 1), na.rm = TRUE)
+crecimiento_produccion_ganaderia <- mean((production_ganaderia[-1] / production_ganaderia[-length(production_ganaderia)] - 1), na.rm = TRUE)
+crecimiento_area <- mean((area_harvested[-1] / area_harvested[-length(area_harvested)] - 1), na.rm = TRUE)
+
+# Calcular los factores de emisión históricos
+factor_emision_agricultura_hist <- emisiones_totales_tierra / production_agricultura
+factor_emision_ganaderia_hist <- emisiones_ganaderia / production_ganaderia
+factor_emision_area_hist <- emisiones_tierra_de_cultivo / area_harvested
+
+# Calcular las desviaciones estándar (sigma)
+sigma_emision_agricultura <- sd(factor_emision_agricultura_hist, na.rm = TRUE)
+sigma_emision_ganaderia <- sd(factor_emision_ganaderia_hist, na.rm = TRUE)
+sigma_emision_area <- sd(factor_emision_area_hist, na.rm = TRUE)
+
+# Función para generar trayectorias estocásticas
+generar_trayectorias <- function(num_simulaciones, anios, produccion_inicial, crecimiento_anual, sigma) {
+  trayectorias <- matrix(NA, nrow = length(anios), ncol = num_simulaciones)
+  trayectorias[1, ] <- produccion_inicial
+  for (i in 2:length(anios)) {
+    crecimiento_estocastico <- rnorm(num_simulaciones, mean = crecimiento_anual, sd = sigma)
+    trayectorias[i, ] <- trayectorias[i - 1, ] * (1 + crecimiento_estocastico)
+  }
+  return(trayectorias)
+}
+
+# Generar trayectorias estocásticas para producción agrícola y ganadera
+trayectorias_agricultura <- generar_trayectorias(num_simulaciones, anios, production_agricultura[1], crecimiento_produccion_agricultura, sigma_emision_agricultura)
+trayectorias_ganaderia <- generar_trayectorias(num_simulaciones, anios, production_ganaderia[1], crecimiento_produccion_ganaderia, sigma_emision_ganaderia)
+trayectorias_area <- generar_trayectorias(num_simulaciones, anios, area_harvested[1], crecimiento_area, sigma_emision_area)
+
+# Calcular emisiones estocásticas para cada simulación
+factor_emision_agricultura <- mean(factor_emision_agricultura_hist, na.rm = TRUE)  # kg CO2e por tonelada de producción agrícola
+factor_emision_ganaderia <- mean(factor_emision_ganaderia_hist, na.rm = TRUE)    # kg CO2e por cabeza de ganado
+factor_emision_area <- mean(factor_emision_area_hist, na.rm = TRUE)          # kg CO2e por hectárea
+
+emisiones_agricultura <- trayectorias_agricultura * factor_emision_agricultura
+emisiones_ganaderia <- trayectorias_ganaderia * factor_emision_ganaderia
+emisiones_area <- trayectorias_area * factor_emision_area
+
+emisiones_totales_simuladas <- emisiones_agricultura + emisiones_ganaderia + emisiones_area
+
+# Calcular el promedio y percentiles de las emisiones simuladas
+emisiones_promedio <- rowMeans(emisiones_totales_simuladas)
+emisiones_p5 <- apply(emisiones_totales_simuladas, 1, quantile, probs = 0.05)
+emisiones_p95 <- apply(emisiones_totales_simuladas, 1, quantile, probs = 0.95)
+
+# Crear un data frame para las trayectorias de emisión promedio y percentiles
 trayectorias <- data.frame(
-  Año = anios
+  Año = anios,
+  Emisiones_Promedio = emisiones_promedio,
+  Emisiones_P5 = emisiones_p5,
+  Emisiones_P95 = emisiones_p95
 )
 
-# Extender las variables hasta 2050
-extender_variable <- function(variable, crecimiento_anual, anios) {
-  extendida <- rep(NA, length(anios))
-  extendida[1:length(variable)] <- variable
-  for (i in (length(variable) + 1):length(anios)) {
-    extendida[i] <- extendida[i - 1] * (1 + crecimiento_anual)
-  }
-  return(extendida)
-}
-# Definir tasas de crecimiento anual para las variables (supuestos)
-crecimiento_stock <- 0.01
-crecimiento_export <- 0.02
-crecimiento_produccion <- 0.015
-crecimiento_cpi <- 0.02
-crecimiento_area <- 0.005
-crecimiento_yield <- 0.01
-crecimiento_stocks <- 0.01
-crecimiento_gpv <- 0.03
-
-# Extender cada variable
-trayectorias$Stock_Variation <- extender_variable(datos$Stock_Variation, crecimiento_stock, anios)
-trayectorias$Export_Quantity <- extender_variable(datos$Export_Quantity, crecimiento_export, anios)
-trayectorias$Production <- extender_variable(datos$Production, crecimiento_produccion, anios)
-trayectorias$Consumer_Price_Indices <- extender_variable(datos$Consumer_Price_Indices, crecimiento_cpi, anios)
-trayectorias$Area_Harvested <- extender_variable(datos$Area_Harvested, crecimiento_area, anios)
-trayectorias$Yield <- extender_variable(datos$Yield, crecimiento_yield, anios)
-trayectorias$Stocks <- extender_variable(datos$Stocks, crecimiento_stocks, anios)
-trayectorias$Gross_Production_Value <- extender_variable(datos$Gross_Production_Value, crecimiento_gpv, anios)
-
-# Calcular la tasa de crecimiento anual promedio de las emisiones históricas
-emisiones_historicas <- datos$Emisiones_Totales_Tierra
-tasa_crecimiento_emisiones <- (emisiones_historicas[length(emisiones_historicas)] / emisiones_historicas[1])^(1 / (length(emisiones_historicas) - 1)) - 1
-
-# Crear columnas para los escenarios BAU, Moderado y Ambicioso
-trayectorias$Emisiones_BAU <- rep(emisiones_historicas[1], length(anios))
-trayectorias$Emisiones_Moderado <- rep(NA, length(anios))
-trayectorias$Emisiones_Ambicioso <- rep(NA, length(anios))
-
-# Llenar el primer año con las emisiones iniciales
-trayectorias$Emisiones_Moderado[1] <- emisiones_historicas[1]
-trayectorias$Emisiones_Ambicioso[1] <- emisiones_historicas[1]
-
-# Calcular las trayectorias de emisiones para cada escenario
-for (i in 2:length(anios)) {
-  # Emisiones en el escenario BAU crecen con la tasa histórica calculada
-  trayectorias$Emisiones_BAU[i] <- trayectorias$Emisiones_BAU[i - 1] * (1 + tasa_crecimiento_emisiones)
-  
-  # Moderado: cero emisiones en 2050
-  trayectorias$Emisiones_Moderado[i] <- trayectorias$Emisiones_Moderado[i - 1] * (1 - 1/(2050 - 2020))
-  
-  # Ambicioso: cero emisiones en 2030
-  trayectorias$Emisiones_Ambicioso[i] <- trayectorias$Emisiones_Ambicioso[i - 1] * (1 - 1/(2030 - 2020))
-}
-
 # Visualizar los resultados
-# Visualizar los resultados
-ggplot(trayectorias, aes(x = Año)) +
-  geom_line(aes(y = Emisiones_BAU, color = "Emisiones Totales (BAU)"), size = 1) +
-  geom_line(aes(y = Emisiones_Moderado, color = "Emisiones Moderado"), size = 1, linetype = "dotdash") +
-  geom_line(aes(y = Emisiones_Ambicioso, color = "Emisiones Ambicioso"), size = 1, linetype = "dotted") +
-  labs(title = "Trayectorias de Emisión y Absorción en el Sector Agrícola",
-       x = "Año",
-       y = "Emisiones y Absorciones Totales de CO2 (toneladas)",
-       color = "Escenario") +
-  theme_minimal() +
-  scale_color_manual(values = c("Emisiones Totales (BAU)" = "blue", 
-                                "Emisiones Moderado" = "orange",
-                                "Emisiones Ambicioso" = "red"))
-
-
-
-#################### Ahora vamos a incluir factores exogenos como politicas y tecnologías ##############################################
-
-
-# Definir el año inicial y final con mayor resolución entre 2024 y 2050
-anio_inicio <- 2000
-anio_fin <- 2050
-anios <- c(anio_inicio:2023, seq(2024, anio_fin, by = 0.25))
-
-# Crear un data frame para almacenar las trayectorias de emisión y absorción
-trayectorias <- data.frame(Año = anios)
-
-# Extender las variables hasta 2050
-extender_variable <- function(variable, crecimiento_anual, anios) {
-  extendida <- rep(NA, length(anios))
-  extendida[1:length(variable)] <- variable
-  for (i in (length(variable) + 1):length(anios)) {
-    extendida[i] <- extendida[i - 1] * (1 + crecimiento_anual)
-  }
-  return(extendida)
-}
-
-# Definir tasas de crecimiento anual para las variables (supuestos) # Estos se pueden calcular con un crecimiento promedio de la serie.
-crecimiento_stock <- 0.01
-crecimiento_export <- 0.02
-crecimiento_produccion <- 0.015
-crecimiento_cpi <- 0.02
-crecimiento_area <- 0.005
-crecimiento_yield <- 0.01
-crecimiento_stocks <- 0.01
-crecimiento_gpv <- 0.03
-crecimiento_emisiones <- 0.02
-crecimiento_absorciones <- 0.015
-
-# Extender cada variable
-trayectorias$Stock_Variation <- extender_variable(datos$Stock_Variation, crecimiento_stock, anios)
-trayectorias$Export_Quantity <- extender_variable(datos$Export_Quantity, crecimiento_export, anios)
-trayectorias$Production <- extender_variable(datos$Production, crecimiento_produccion, anios)
-trayectorias$Consumer_Price_Indices <- extender_variable(datos$Consumer_Price_Indices, crecimiento_cpi, anios)
-trayectorias$Area_Harvested <- extender_variable(datos$Area_Harvested, crecimiento_area, anios)
-trayectorias$Yield <- extender_variable(datos$Yield, crecimiento_yield, anios)
-trayectorias$Stocks <- extender_variable(datos$Stocks, crecimiento_stocks, anios)
-trayectorias$Gross_Production_Value <- extender_variable(datos$Gross_Production_Value, crecimiento_gpv, anios)
-trayectorias$Emisiones_Totales_Tierra <- extender_variable(datos$Emisiones_Totales_Tierra, crecimiento_emisiones, anios)
-trayectorias$Emisiones_Ganadería <- extender_variable(datos$Emisiones_Ganadería, crecimiento_emisiones, anios)
-trayectorias$Absorciones_Ganadería <- extender_variable(datos$Absorciones_Ganadería, crecimiento_absorciones, anios)
-trayectorias$Emisiones_Tierras_Totales <- extender_variable(datos$Emisiones_Tierras_Totales, crecimiento_emisiones, anios)
-trayectorias$Absorciones_Tierras_Totales <- extender_variable(datos$Absorciones_Tierras_Totales, crecimiento_absorciones, anios)
-trayectorias$Emisiones_Tierra_de_Cultivo <- extender_variable(datos$Emisiones_Tierra_de_Cultivo, crecimiento_emisiones, anios)
-trayectorias$Absorciones_Tierra_de_Cultivo <- extender_variable(datos$Absorciones_Tierra_de_Cultivo, crecimiento_absorciones, anios)
-trayectorias$Emisiones_Pastizales <- extender_variable(datos$Emisiones_Pastizales, crecimiento_emisiones, anios)
-trayectorias$Absorciones_Pastizales <- extender_variable(datos$Absorciones_Pastizales, crecimiento_absorciones, anios)
-trayectorias$Emisiones_Humedales <- extender_variable(datos$Emisiones_Humedales, crecimiento_emisiones, anios)
-trayectorias$Absorciones_Humedales <- extender_variable(datos$Absorciones_Humedales, crecimiento_absorciones, anios)
-trayectorias$Emisiones_Asentamiento <- extender_variable(datos$Emisiones_Asentamiento, crecimiento_emisiones, anios)
-trayectorias$Absorciones_Asentamientos <- extender_variable(datos$Absorciones_Asentamientos, crecimiento_absorciones, anios)
-trayectorias$Emisiones_Otras_Tierras <- extender_variable(datos$Emisiones_Otras_Tierras, crecimiento_emisiones, anios)
-trayectorias$Absorciones_Otras_Tierra <- extender_variable(datos$Absorciones_Otras_Tierra, crecimiento_absorciones, anios)
-trayectorias$Emisiones_Totales <- extender_variable(datos$Emisiones_Totales, crecimiento_emisiones, anios)
-trayectorias$Absorciones_Totales <- extender_variable(datos$Absorciones_Totales, crecimiento_absorciones, anios)
-
-# Calcular la tasa de crecimiento anual promedio de las emisiones históricas
-emisiones_historicas <- datos$Emisiones_Totales_Tierra
-tasa_crecimiento_emisiones <- (emisiones_historicas[length(emisiones_historicas)] / emisiones_historicas[1])^(1 / (length(emisiones_historicas) - 1)) - 1
-
-# Ajustar la tasa de crecimiento para que sea realista
-tasa_crecimiento_emisiones <- min(tasa_crecimiento_emisiones, 0.01)  # Ajustar a un máximo de 1%
-
-# Crear columnas para los escenarios BAU, Moderado y Ambicioso
-trayectorias$Emisiones_BAU <- rep(emisiones_historicas[1], length(anios))
-trayectorias$Emisiones_Moderado <- rep(NA, length(anios))
-trayectorias$Emisiones_Ambicioso <- rep(NA, length(anios))
-
-# Llenar el primer año con las emisiones iniciales
-trayectorias$Emisiones_Moderado[1] <- emisiones_historicas[1]
-trayectorias$Emisiones_Ambicioso[1] <- emisiones_historicas[1]
-
-# Factores de reducción de emisiones (tecnologías y políticas)
-factor_agricultura_precision <- 0.95  # Reducción del 1%
-factor_energias_renovables <- 0.5    # Reducción del 1%
-factor_subsidios_sostenibles <- 0.995  # Reducción del 0.5%
-factor_regulacion_emisiones <- 0.98   # Reducción del 2%
-otro_factor_1<- 0.98   # Reducción del 2%
-otro_factor_2<- 0.98   # Reducción del 2%
-otro_factor_3<- 0.98   # Reducción del 2%
-otro_factor_4<- 0.98   # Reducción del 2%
-otro_factor_5<- 0.98   # Reducción del 2%
-
-# Aplicar los factores de reducción en los escenarios Moderado y Ambicioso
-factor_moderado <-  factor_regulacion_emisiones*otro_factor_1*otro_factor_2
-factor_ambicioso <- factor_agricultura_precision * factor_energias_renovables * factor_regulacion_emisiones*otro_factor_1*otro_factor_2
-
-# Definir periodo de transición y reducción
-transicion_inicio <- 2025
-transicion_fin_moderado <- 2040
-transicion_fin_ambicioso <- 2028
-
-# Calcular las trayectorias de emisiones para cada escenario
-calcular_trayectoria <- function(emisiones_iniciales, factor_moderado, factor_ambicioso, transicion_inicio, transicion_fin_moderado, transicion_fin_ambicioso, anios, tasa_crecimiento_emisiones) {
-  BAU <- rep(emisiones_iniciales[1], length(anios))
-  Moderado <- rep(NA, length(anios))
-  Ambicioso <- rep(NA, length(anios))
-  
-  Moderado[1] <- emisiones_iniciales[1]
-  Ambicioso[1] <- emisiones_iniciales[1]
-  
-  for (i in 2:length(anios)) {
-    BAU[i] <- BAU[i - 1] * (1 + tasa_crecimiento_emisiones)
-    
-    if (anios[i] >= transicion_inicio) {
-      if (anios[i] <= transicion_fin_moderado) {
-        Moderado[i] <- Moderado[i - 1] * (1 + tasa_crecimiento_emisiones)
-      } else {
-        Moderado[i] <- Moderado[i - 1] * factor_moderado
-        factor_moderado <- factor_moderado * 0.99  # Reducción gradual adicional
-      }
-      
-      if (anios[i] <= transicion_fin_ambicioso) {
-        Ambicioso[i] <- Ambicioso[i - 1] * (1 + tasa_crecimiento_emisiones)
-      } else {
-        Ambicioso[i] <- Ambicioso[i - 1] * factor_ambicioso
-        factor_ambicioso <- factor_ambicioso * 0.98  # Reducción gradual adicional
-      }
-    } else {
-      Moderado[i] <- Moderado[i - 1] * (1 + tasa_crecimiento_emisiones)
-      Ambicioso[i] <- Ambicioso[i - 1] * (1 + tasa_crecimiento_emisiones)
-    }
-  }
-  
-  return(data.frame(BAU, Moderado, Ambicioso))
-}
-
-# Aplicar la función para cada tipo de emisión
-emisiones_tierra <- calcular_trayectoria(datos$Emisiones_Totales_Tierra, factor_moderado, factor_ambicioso, transicion_inicio, transicion_fin_moderado, transicion_fin_ambicioso, anios, tasa_crecimiento_emisiones)
-emisiones_ganaderia <- calcular_trayectoria(datos$Emisiones_Ganadería, factor_moderado, factor_ambicioso, transicion_inicio, transicion_fin_moderado, transicion_fin_ambicioso, anios, tasa_crecimiento_emisiones)
-emisiones_pastizales <- calcular_trayectoria(datos$Emisiones_Pastizales, factor_moderado, factor_ambicioso, transicion_inicio, transicion_fin_moderado, transicion_fin_ambicioso, anios, tasa_crecimiento_emisiones)
-
-# Agregar los resultados al data frame de trayectorias
-trayectorias$Emisiones_Tierra_BAU <- emisiones_tierra$BAU
-trayectorias$Emisiones_Tierra_Moderado <- emisiones_tierra$Moderado
-trayectorias$Emisiones_Tierra_Ambicioso <- emisiones_tierra$Ambicioso
-
-trayectorias$Emisiones_Ganadería_BAU <- emisiones_ganaderia$BAU
-trayectorias$Emisiones_Ganadería_Moderado <- emisiones_ganaderia$Moderado
-trayectorias$Emisiones_Ganadería_Ambicioso <- emisiones_ganaderia$Ambicioso
-
-trayectorias$Emisiones_Pastizales_BAU <- emisiones_pastizales$BAU
-trayectorias$Emisiones_Pastizales_Moderado <- emisiones_pastizales$Moderado
-trayectorias$Emisiones_Pastizales_Ambicioso <- emisiones_pastizales$Ambicioso
-
-# Visualizar los resultados
-plot_emisiones <- function(data, title, subtitle, y_label) {
+plot_emisiones_estocasticas <- function(data, title, subtitle, y_label) {
   ggplot(data, aes(x = Año)) +
-    geom_line(aes(y = Emisiones_Tierra_BAU, color = "Emisiones Tierra (BAU)"), size = 1) +
-    geom_line(aes(y = Emisiones_Tierra_Moderado, color = "Emisiones Tierra Moderado"), size = 1, linetype = "dashed") +
-    geom_line(aes(y = Emisiones_Tierra_Ambicioso, color = "Emisiones Tierra Ambicioso"), size = 1, linetype = "dotted") +
-    geom_line(aes(y = Emisiones_Ganadería_BAU, color = "Emisiones Ganadería (BAU)"), size = 1) +
-    geom_line(aes(y = Emisiones_Ganadería_Moderado, color = "Emisiones Ganadería Moderado"), size = 1, linetype = "dashed") +
-    geom_line(aes(y = Emisiones_Ganadería_Ambicioso, color = "Emisiones Ganadería Ambicioso"), size = 1, linetype = "dotted") +
-    geom_line(aes(y = Emisiones_Pastizales_BAU, color = "Emisiones Pastizales (BAU)"), size = 1) +
-    geom_line(aes(y = Emisiones_Pastizales_Moderado, color = "Emisiones Pastizales Moderado"), size = 1, linetype = "dashed") +
-    geom_line(aes(y = Emisiones_Pastizales_Ambicioso, color = "Emisiones Pastizales Ambicioso"), size = 1, linetype = "dotted") +
+    geom_line(aes(y = Emisiones_Promedio, color = "Emisiones Promedio"), size = 1) +
+    geom_ribbon(aes(ymin = Emisiones_P5, ymax = Emisiones_P95), alpha = 0.2) +
     labs(title = title, subtitle = subtitle, x = "Año", y = y_label, color = "Escenario") +
     theme_minimal() +
-    scale_color_manual(values = c("Emisiones Tierra (BAU)" = "red", 
-                                  "Emisiones Tierra Moderado" = "green", 
-                                  "Emisiones Tierra Ambicioso" = "blue",
-                                  "Emisiones Ganadería (BAU)" = "orange",
-                                  "Emisiones Ganadería Moderado" = "purple",
-                                  "Emisiones Ganadería Ambicioso" = "pink",
-                                  "Emisiones Pastizales (BAU)" = "brown",
-                                  "Emisiones Pastizales Moderado" = "cyan",
-                                  "Emisiones Pastizales Ambicioso" = "magenta"))
+    scale_color_manual(values = c("Emisiones Promedio" = "red"))
 }
 
-plot1 ## Es el original
-plot2<-plot_emisiones(trayectorias, "Trayectorias de Emisión en el Sector Agrícola", "Comparación de escenarios de mitigación hasta 2050", "Emisiones Totales de CO2 (toneladas)")### Con cambios en energías renovable
+plot1 <- plot_emisiones_estocasticas(trayectorias, "Trayectorias de Emisión en el Sector Agrícola (Enfoque Estocástico)", "Comparación de escenarios de mitigación hasta 2050", "Emisiones Totales de CO2 (toneladas)")
+print(plot1)
+
+#############################  Haremos un ejercicio para simular factores de reducción ########################
+
+############################  Haremos un ejercicio para simular factores de reducción ########################
+
+# Factores de reducción (ejemplos)
+factor_agricultura_precision <- 0.99  # Reducción del 95%
+factor_energias_renovables <- 0.95    # Reducción del 20%
+factor_subsidios_sostenibles <- 0.97  # Reducción del 10%
+factor_regulacion_emisiones <- 0.93   # Reducción del 15%
+factor_CCS <- 0.90                    # Reducción del 30%
+
+# Factores combinados para escenarios
+factor_reduccion_agricultura_moderado <- factor_agricultura_precision * factor_subsidios_sostenibles
+factor_reduccion_agricultura_ambicioso <- factor_agricultura_precision * factor_subsidios_sostenibles * factor_energias_renovables
+
+factor_reduccion_ganaderia_moderado <- factor_regulacion_emisiones * factor_CCS
+factor_reduccion_ganaderia_ambicioso <- factor_regulacion_emisiones * factor_CCS * factor_energias_renovables
+
+factor_reduccion_area_moderado <- factor_agricultura_precision
+factor_reduccion_area_ambicioso <- factor_agricultura_precision * factor_energias_renovables
+
+# Calcular las trayectorias de emisiones para cada actividad y escenario
+calcular_trayectoria_reduccion <- function(emisiones_iniciales, factores_reduccion, anios, transicion_inicio, transicion_fin) {
+  trayectorias <- matrix(NA, nrow = length(anios), ncol = num_simulaciones)
+  trayectorias[1, ] <- emisiones_iniciales[1, ]
+  
+  for (i in 2:length(anios)) {
+    if (anios[i] >= transicion_inicio && anios[i] <= transicion_fin) {
+      trayectorias[i, ] <- trayectorias[i - 1, ] * factores_reduccion
+    } else if (anios[i] > transicion_fin) {
+      trayectorias[i, ] <- trayectorias[i - 1, ] * factores_reduccion
+    } else {
+      trayectorias[i, ] <- emisiones_iniciales[i, ]
+    }
+  }
+  return(trayectorias)
+}
+
+transicion_inicio <- 2025
+transicion_fin_moderado <- 2050
+transicion_fin_ambicioso <- 2050
+
+# Emisiones agrícolas
+trayectorias_agricultura_moderado <- calcular_trayectoria_reduccion(emisiones_agricultura, factor_reduccion_agricultura_moderado, anios, transicion_inicio, transicion_fin_moderado)
+trayectorias_agricultura_ambicioso <- calcular_trayectoria_reduccion(emisiones_agricultura, factor_reduccion_agricultura_ambicioso, anios, transicion_inicio, transicion_fin_ambicioso)
+
+# Emisiones ganaderas
+trayectorias_ganaderia_moderado <- calcular_trayectoria_reduccion(emisiones_ganaderia, factor_reduccion_ganaderia_moderado, anios, transicion_inicio, transicion_fin_moderado)
+trayectorias_ganaderia_ambicioso <- calcular_trayectoria_reduccion(emisiones_ganaderia, factor_reduccion_ganaderia_ambicioso, anios, transicion_inicio, transicion_fin_ambicioso)
+
+# Emisiones por área
+trayectorias_area_moderado <- calcular_trayectoria_reduccion(emisiones_area, factor_reduccion_area_moderado, anios, transicion_inicio, transicion_fin_moderado)
+trayectorias_area_ambicioso <- calcular_trayectoria_reduccion(emisiones_area, factor_reduccion_area_ambicioso, anios, transicion_inicio, transicion_fin_ambicioso)
+
+# Emisiones totales moderado
+emisiones_totales_moderado <- trayectorias_agricultura_moderado + trayectorias_ganaderia_moderado + trayectorias_area_moderado
+
+# Emisiones totales ambicioso
+emisiones_totales_ambicioso <- trayectorias_agricultura_ambicioso + trayectorias_ganaderia_ambicioso + trayectorias_area_ambicioso
+
+# Calcular el promedio y percentiles de las emisiones en los escenarios moderado y ambicioso
+emisiones_moderado_promedio <- rowMeans(emisiones_totales_moderado)
+emisiones_moderado_p5 <- apply(emisiones_totales_moderado, 1, quantile, probs = 0.05)
+emisiones_moderado_p95 <- apply(emisiones_totales_moderado, 1, quantile, probs = 0.95)
+
+emisiones_ambicioso_promedio <- rowMeans(emisiones_totales_ambicioso)
+emisiones_ambicioso_p5 <- apply(emisiones_totales_ambicioso, 1, quantile, probs = 0.05)
+emisiones_ambicioso_p95 <- apply(emisiones_totales_ambicioso, 1, quantile, probs = 0.95)
+
+# Agregar los resultados al data frame de trayectorias
+trayectorias <- trayectorias %>%
+  mutate(
+    Emisiones_Moderado_Promedio = emisiones_moderado_promedio,
+    Emisiones_Moderado_P5 = emisiones_moderado_p5,
+    Emisiones_Moderado_P95 = emisiones_moderado_p95,
+    Emisiones_Ambicioso_Promedio = emisiones_ambicioso_promedio,
+    Emisiones_Ambicioso_P5 = emisiones_ambicioso_p5,
+    Emisiones_Ambicioso_P95 = emisiones_ambicioso_p95
+  )
+
+# Visualizar los resultados
+plot_emisiones_estocasticas_con_mitigacion <- function(data, title, subtitle, y_label) {
+  ggplot(data, aes(x = Año)) +
+    geom_line(aes(y = Emisiones_Promedio, color = "Emisiones Promedio BAU"), size = 1) +
+    geom_ribbon(aes(ymin = Emisiones_P5, ymax = Emisiones_P95), alpha = 0.2, fill = "red") +
+    geom_line(aes(y = Emisiones_Moderado_Promedio, color = "Emisiones Promedio Moderado"), size = 1, linetype = "dashed") +
+    geom_ribbon(aes(ymin = Emisiones_Moderado_P5, ymax = Emisiones_Moderado_P95), alpha = 0.2, fill = "green") +
+    geom_line(aes(y = Emisiones_Ambicioso_Promedio, color = "Emisiones Promedio Ambicioso"), size = 1, linetype = "dotted") +
+    geom_ribbon(aes(ymin = Emisiones_Ambicioso_P5, ymax = Emisiones_Ambicioso_P95), alpha = 0.2, fill = "blue") +
+    scale_x_continuous(breaks = c(seq(2000, 2030, by = 5), seq(2030, 2050, by = 5))) +
+    labs(title = title, subtitle = subtitle, x = "Año", y = y_label, color = "Escenario") +
+    theme_minimal() +
+    scale_color_manual(values = c("Emisiones Promedio BAU" = "red", 
+                                  "Emisiones Promedio Moderado" = "green", 
+                                  "Emisiones Promedio Ambicioso" = "blue"))
+}
+
+plot3 <- plot_emisiones_estocasticas_con_mitigacion(trayectorias, "Trayectorias de Emisión en el Sector Agrícola (Enfoque Estocástico con Mitigación)", "Comparación de escenarios de mitigación hasta 2050", "Emisiones Totales de CO2 (toneladas)")
+print(plot3)
+
+
