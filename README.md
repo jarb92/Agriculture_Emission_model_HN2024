@@ -137,11 +137,12 @@ print(plot1)
 ############################  Haremos un ejercicio para simular factores de reducción ########################
 
 # Factores de reducción (ejemplos)
-factor_agricultura_precision <- 0.99  # Reducción del 95%
-factor_energias_renovables <- 0.95    # Reducción del 20%
-factor_subsidios_sostenibles <- 0.97  # Reducción del 10%
-factor_regulacion_emisiones <- 0.93   # Reducción del 15%
-factor_CCS <- 0.90                    # Reducción del 30%
+factor_agricultura_precision <- 0.99  # Reducción del 1%
+factor_energias_renovables <- 0.95    # Reducción del 5%
+factor_subsidios_sostenibles <- 0.97  # Reducción del 3%
+factor_regulacion_emisiones <- 0.93   # Reducción del 7%
+factor_CCS <- 0.90                    # Reducción del 10%
+
 
 # Factores combinados para escenarios
 factor_reduccion_agricultura_moderado <- factor_agricultura_precision * factor_subsidios_sostenibles
