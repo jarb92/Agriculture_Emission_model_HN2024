@@ -234,3 +234,73 @@ plot3 <- plot_emisiones_estocasticas_con_mitigacion(trayectorias, "Trayectorias 
 print(plot3)
 
 
+
+
+
+
+
+
+
+################ Modulo de coste beneficios #######################################################
+
+####### Estos no son datos reales, hay que discutirlo en taller 
+
+
+
+# Definir los costos y beneficios (ejemplo en Lempiras)
+costo_agricultura_precision <- 200000000  # Costo de implementar agricultura de precisión
+costo_energias_renovables <- 1500000000    # Costo de implementar energías renovables
+costo_subsidios_sostenibles <- 5000000   # Costo de subsidios sostenibles
+costo_regulacion_emisiones <- 80000000    # Costo de regulaciones de emisiones
+costo_CCS <- 200000000                    # Costo de captura y almacenamiento de carbono
+
+beneficio_emisiones_reducidas <- function(emisiones_reducidas, precio_carbono) {
+  return(emisiones_reducidas * precio_carbono)
+}
+
+precio_carbono <- 50000  # Precio del carbono en Lempiras por tonelada
+
+# Calcular las emisiones reducidas para cada escenario
+emisiones_reducidas_moderado <- emisiones_totales_simuladas - emisiones_totales_moderado
+emisiones_reducidas_ambicioso <- emisiones_totales_simuladas - emisiones_totales_ambicioso
+
+# Calcular los beneficios de las emisiones reducidas
+beneficios_moderado <- beneficio_emisiones_reducidas(emisiones_reducidas_moderado, precio_carbono)
+beneficios_ambicioso <- beneficio_emisiones_reducidas(emisiones_reducidas_ambicioso, precio_carbono)
+
+# Calcular los costos totales para cada escenario
+costos_moderado <- costo_agricultura_precision + costo_subsidios_sostenibles
+costos_ambicioso <- costo_agricultura_precision + costo_subsidios_sostenibles + costo_energias_renovables + costo_CCS
+
+# Calcular los beneficios netos
+beneficio_neto_moderado <- rowMeans(beneficios_moderado) - costos_moderado
+beneficio_neto_ambicioso <- rowMeans(beneficios_ambicioso) - costos_ambicioso
+
+# Agregar los resultados al data frame de trayectorias
+trayectorias <- trayectorias %>%
+  mutate(
+    Beneficio_Neto_Moderado = beneficio_neto_moderado,
+    Beneficio_Neto_Ambicioso = beneficio_neto_ambicioso
+  )
+
+# Visualizar los resultados de coste-beneficio
+plot_coste_beneficio <- function(data, title, subtitle, y_label) {
+  ggplot(data, aes(x = Año)) +
+    geom_line(aes(y = Beneficio_Neto_Moderado, color = "Beneficio Neto Moderado"), size = 1) +
+    geom_line(aes(y = Beneficio_Neto_Ambicioso, color = "Beneficio Neto Ambicioso"), size = 1, linetype = "dashed") +
+    labs(title = title, subtitle = subtitle, x = "Año", y = y_label, color = "Escenario") +
+    theme_minimal() +
+    scale_color_manual(values = c("Beneficio Neto Moderado" = "green", 
+                                  "Beneficio Neto Ambicioso" = "blue"))
+}
+
+plot4 <- plot_coste_beneficio(trayectorias, "Análisis de Coste-Beneficio en el Sector Agrícola", "Comparación de escenarios de mitigación hasta 2050", "Beneficio Neto (Lempiras)")
+print(plot4)
+
+
+
+
+################################
+
+
+
