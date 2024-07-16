@@ -8,7 +8,7 @@ library(ggplot2)
 # Cargar los datos desde el archivo Excel
 data <- read_excel("C:/Users/DEES-JULIO/Desktop/GIZ/Agricultura/agricultural_emissions_2000_2020.xlsx")
 View(data)
-GPV <- read_excel("data/Value of Agricultural Production.xls")
+GPV <- read_excel("C:/Users/DEES-JULIO/Desktop/GIZ/Agricultura/data/Value of Agricultural Production.xls")
 
 # Preparar los datos
 resultado <- GPV %>%
@@ -61,7 +61,7 @@ absorciones_totales <- data$Absorciones_Totales
 # Definir parámetros de simulación
 num_simulaciones <- 1000
 anio_inicio <- 2000
-anio_fin <- 2050
+anio_fin <- 2100
 anios <- seq(anio_inicio, anio_fin, by = 1)
 
 # Calcular las tasas de crecimiento promedio
@@ -134,7 +134,9 @@ print(plot1)
 
 #############################  Haremos un ejercicio para simular factores de reducción ########################
 
-############################  Haremos un ejercicio para simular factores de reducción ########################
+#############################################################################################################################################
+#############################################################################################################################################
+
 
 # Factores de reducción (ejemplos)
 factor_agricultura_precision <- 0.99  # Reducción del 1%
@@ -142,11 +144,11 @@ factor_energias_renovables <- 0.95    # Reducción del 5%
 factor_subsidios_sostenibles <- 0.97  # Reducción del 3%
 factor_regulacion_emisiones <- 0.93   # Reducción del 7%
 factor_CCS <- 0.90                    # Reducción del 10%
-
+otro_factor <- 0.8                    # Reducción del 20% anual
 
 # Factores combinados para escenarios
 factor_reduccion_agricultura_moderado <- factor_agricultura_precision * factor_subsidios_sostenibles
-factor_reduccion_agricultura_ambicioso <- factor_agricultura_precision * factor_subsidios_sostenibles * factor_energias_renovables
+factor_reduccion_agricultura_ambicioso <- factor_agricultura_precision * factor_subsidios_sostenibles * factor_energias_renovables * otro_factor
 
 factor_reduccion_ganaderia_moderado <- factor_regulacion_emisiones * factor_CCS
 factor_reduccion_ganaderia_ambicioso <- factor_regulacion_emisiones * factor_CCS * factor_energias_renovables
@@ -172,7 +174,7 @@ calcular_trayectoria_reduccion <- function(emisiones_iniciales, factores_reducci
 }
 
 transicion_inicio <- 2025
-transicion_fin_moderado <- 2050
+transicion_fin_moderado <- 2040
 transicion_fin_ambicioso <- 2050
 
 # Emisiones agrícolas
@@ -222,7 +224,7 @@ plot_emisiones_estocasticas_con_mitigacion <- function(data, title, subtitle, y_
     geom_ribbon(aes(ymin = Emisiones_Moderado_P5, ymax = Emisiones_Moderado_P95), alpha = 0.2, fill = "green") +
     geom_line(aes(y = Emisiones_Ambicioso_Promedio, color = "Emisiones Promedio Ambicioso"), size = 1, linetype = "dotted") +
     geom_ribbon(aes(ymin = Emisiones_Ambicioso_P5, ymax = Emisiones_Ambicioso_P95), alpha = 0.2, fill = "blue") +
-    scale_x_continuous(breaks = c(seq(2000, 2030, by = 5), seq(2030, 2050, by = 5))) +
+    scale_x_continuous(breaks = c(seq(2000, 2030, by = 5), seq(2030, 2100, by = 10))) +
     labs(title = title, subtitle = subtitle, x = "Año", y = y_label, color = "Escenario") +
     theme_minimal() +
     scale_color_manual(values = c("Emisiones Promedio BAU" = "red", 
@@ -230,22 +232,15 @@ plot_emisiones_estocasticas_con_mitigacion <- function(data, title, subtitle, y_
                                   "Emisiones Promedio Ambicioso" = "blue"))
 }
 
-plot3 <- plot_emisiones_estocasticas_con_mitigacion(trayectorias, "Trayectorias de Emisión en el Sector Agrícola (Enfoque Estocástico con Mitigación)", "Comparación de escenarios de mitigación hasta 2050", "Emisiones Totales de CO2 (toneladas)")
+plot3 <- plot_emisiones_estocasticas_con_mitigacion(trayectorias, "Trayectorias de Emisión en el Sector Agrícola", "Comparación de escenarios de mitigación hasta 2050", "Emisiones Totales de CO2 (toneladas)")
 print(plot3)
 
-
-
-
-
-
-
+##################################################################################################################################################
 
 
 ################ Modulo de coste beneficios #######################################################
 
 ####### Estos no son datos reales, hay que discutirlo en taller 
-
-
 
 # Definir los costos y beneficios (ejemplo en Lempiras)
 costo_agricultura_precision <- 200000000  # Costo de implementar agricultura de precisión
@@ -258,7 +253,7 @@ beneficio_emisiones_reducidas <- function(emisiones_reducidas, precio_carbono) {
   return(emisiones_reducidas * precio_carbono)
 }
 
-precio_carbono <- 50000  # Precio del carbono en Lempiras por tonelada
+precio_carbono <- 5000  # Precio del carbono en Lempiras por tonelada
 
 # Calcular las emisiones reducidas para cada escenario
 emisiones_reducidas_moderado <- emisiones_totales_simuladas - emisiones_totales_moderado
@@ -268,9 +263,12 @@ emisiones_reducidas_ambicioso <- emisiones_totales_simuladas - emisiones_totales
 beneficios_moderado <- beneficio_emisiones_reducidas(emisiones_reducidas_moderado, precio_carbono)
 beneficios_ambicioso <- beneficio_emisiones_reducidas(emisiones_reducidas_ambicioso, precio_carbono)
 
-# Calcular los costos totales para cada escenario
-costos_moderado <- costo_agricultura_precision + costo_subsidios_sostenibles
-costos_ambicioso <- costo_agricultura_precision + costo_subsidios_sostenibles + costo_energias_renovables + costo_CCS
+# Crear un vector de costos que sean cero antes del 2025
+costos_moderado <- rep(0, length(anios))
+costos_ambicioso <- rep(0, length(anios))
+
+costos_moderado[anios >= 2025] <- costo_agricultura_precision + costo_subsidios_sostenibles
+costos_ambicioso[anios >= 2025] <- costo_agricultura_precision + costo_subsidios_sostenibles + costo_energias_renovables + costo_CCS
 
 # Calcular los beneficios netos
 beneficio_neto_moderado <- rowMeans(beneficios_moderado) - costos_moderado
@@ -290,6 +288,7 @@ plot_coste_beneficio <- function(data, title, subtitle, y_label) {
     geom_line(aes(y = Beneficio_Neto_Ambicioso, color = "Beneficio Neto Ambicioso"), size = 1, linetype = "dashed") +
     labs(title = title, subtitle = subtitle, x = "Año", y = y_label, color = "Escenario") +
     theme_minimal() +
+    scale_y_continuous(labels = scales::comma) +
     scale_color_manual(values = c("Beneficio Neto Moderado" = "green", 
                                   "Beneficio Neto Ambicioso" = "blue"))
 }
@@ -298,9 +297,6 @@ plot4 <- plot_coste_beneficio(trayectorias, "Análisis de Coste-Beneficio en el 
 print(plot4)
 
 
-
-
-################################
 
 
 
