@@ -1,300 +1,307 @@
 # Emission-model-Agriculture_-HN2024
-# Instalar y cargar los paquetes necesarios
+# Cargar librerías necesarias
 library(readxl)
 library(dplyr)
-library(tidyr)
 library(ggplot2)
+library(openxlsx)
+library(tidyr)
 
-# Cargar los datos desde el archivo Excel
-data <- read_excel("C:/Users/DEES-JULIO/Desktop/GIZ/Agricultura/agricultural_emissions_2000_2020.xlsx")
-View(data)
-GPV <- read_excel("C:/Users/DEES-JULIO/Desktop/GIZ/Agricultura/data/Value of Agricultural Production.xls")
+# Leer los datos desde el archivo Excel
+data <- read_excel("C:/Users/DEES-JULIO/Desktop/GIZ/Agricultura/data/data.xlsx",sheet = "data")
 
-# Preparar los datos
-resultado <- GPV %>%
-  filter(Year >= 2000, Year <= 2020) %>%
-  group_by(Year, Categoría) %>%
-  summarise(total_value = sum(Value, na.rm = TRUE)) %>%
-  arrange(Year, Categoría)
-
-resultado_wide <- resultado %>%
-  pivot_wider(names_from = Categoría, values_from = total_value, names_prefix = "total_value_")
-
-nGPV <- data.frame(resultado_wide)
-View(nGPV)
-
-# Definir las variables del archivo principal
+# Definir las variables necesarias
 years <- data$Year
-
-#variables economicas 
-
-export_value <- data$Export_Value
-import_value <- data$Import_Value
-consumer_price_indices <- data$Consumer_Price_Indices
-area_harvested <- data$Area_Harvested
-yield <- data$Yield
+poblacion_animal <- data$Poblacion_Animal  # Población animal en el dataset
+superficie_cultivada <- data$Superficie_Cultivada  # Superficie cultivada en hectáreas
+superficie_pastizales <- data$Superficie_Pastizales  # Superficie de pastizales en hectáreas
+N_total_aplicado <- data$N_total_aplicado_p  # N aplicado en estiércol
+N_aplicado <- data$N_aplicado_p  # N aplicado en suelos gestionados
 
 
-# Variables activas en el modelos
 
-gross_production_value <- data$Gross_Production_Value
-production_agricultura <- nGPV$total_value_Agricultura
-production_ganaderia <- nGPV$total_value_Ganadería
 
-## Variables de emisiones
+#############################################################
 
-emisiones_totales_tierra <- data$Emisiones_Totales_Tierra
-emisiones_ganaderia <- data$Emisiones_Ganadería
-absorciones_ganaderia <- data$Absorciones_Ganadería
-absorciones_tierras_totales <- data$Absorciones_Tierras_Totales
-emisiones_tierra_de_cultivo <- data$Emisiones_Tierra_de_Cultivo
-absorciones_tierra_de_cultivo <- data$Absorciones_Tierra_de_Cultivo
-emisiones_pastizales <- data$Emisiones_Pastizales
-absorciones_pastizales <- data$Absorciones_Pastizales
-emisiones_humedales <- data$Emisiones_Humedales
-absorciones_humedales <- data$Absorciones_Humedales
-emisiones_asentamiento <- data$Emisiones_Asentamiento
-absorciones_asentamientos <- data$Absorciones_Asentamientos
-emisiones_totales <- data$Emisiones_Totales
-absorciones_totales <- data$Absorciones_Totales
+factor <- read_excel("C:/Users/DEES-JULIO/Desktop/GIZ/Agricultura/data/data.xlsx",sheet = "Factor_calculado")
+# Definir los factores de emisión y GWP (Global Warming Potential)
+factor_emision_CH4_fermentacion <- 56  # Ejemplo de factor de emisión para CH₄ (Fermentación entérica, kg CH₄/cabeza/año)
+factor_emision_CH4_estiércol <- 0.01  # Ejemplo de factor de emisión CH₄ para estiércol (kg CH₄/cabeza/año)
+factor_emision_N2O_estiércol <- 0.01  # Factor de emisión N₂O estiércol (kg N₂O-N/kg N aplicado)
+factor_emision_N2O_suelos <- 0.01  # Factor de emisión N₂O suelos gestionados (kg N₂O-N/kg N aplicado)
+factor_emision_CO2_cultivo <- 1.0  # Factor de emisión CO₂ para tierras de cultivo (t CO₂/ha)
+factor_emision_CO2_pastizales <- 7  # Factor de emisión CO₂ para pastizales (t CO₂/ha)
+factor_emision_GHG_biomasa <- 0.5  # Factor de emisión por quemado de biomasa (valor supuesto)
+GWP_CH4 <- 25  # GWP para CH₄
+GWP_N2O <- 298  # GWP para N₂O
 
-# Definir parámetros de simulación
-num_simulaciones <- 1000
-anio_inicio <- 2000
-anio_fin <- 2100
-anios <- seq(anio_inicio, anio_fin, by = 1)
+# Definir tasa de cambio de uso del suelo (por ejemplo, 4% anual)
+tasa_cambio_suelo <- 0.03
 
-# Calcular las tasas de crecimiento promedio
-crecimiento_produccion_agricultura <- mean((production_agricultura[-1] / production_agricultura[-length(production_agricultura)] - 1), na.rm = TRUE)
-crecimiento_produccion_ganaderia <- mean((production_ganaderia[-1] / production_ganaderia[-length(production_ganaderia)] - 1), na.rm = TRUE)
-crecimiento_area <- mean((area_harvested[-1] / area_harvested[-length(area_harvested)] - 1), na.rm = TRUE)
-
-# Calcular los factores de emisión históricos
-factor_emision_agricultura_hist <- emisiones_totales_tierra / production_agricultura
-factor_emision_ganaderia_hist <- emisiones_ganaderia / production_ganaderia
-factor_emision_area_hist <- emisiones_tierra_de_cultivo / area_harvested
-
-# Calcular las desviaciones estándar (sigma)
-sigma_emision_agricultura <- sd(factor_emision_agricultura_hist, na.rm = TRUE)
-sigma_emision_ganaderia <- sd(factor_emision_ganaderia_hist, na.rm = TRUE)
-sigma_emision_area <- sd(factor_emision_area_hist, na.rm = TRUE)
-
-# Función para generar trayectorias estocásticas
-generar_trayectorias <- function(num_simulaciones, anios, produccion_inicial, crecimiento_anual, sigma) {
-  trayectorias <- matrix(NA, nrow = length(anios), ncol = num_simulaciones)
-  trayectorias[1, ] <- produccion_inicial
-  for (i in 2:length(anios)) {
-    crecimiento_estocastico <- rnorm(num_simulaciones, mean = crecimiento_anual, sd = sigma)
-    trayectorias[i, ] <- trayectorias[i - 1, ] * (1 + crecimiento_estocastico)
-  }
-  return(trayectorias)
+# Ajustar la superficie de cultivo y pastizales por la tasa de cambio de uso del suelo
+for (i in 2:length(years)) {
+  cambio_suelo <- superficie_cultivada[i - 1] * tasa_cambio_suelo
+  superficie_cultivada[i] <- superficie_cultivada[i - 1] - cambio_suelo
+  superficie_pastizales[i] <- superficie_pastizales[i - 1] + cambio_suelo
 }
 
-# Generar trayectorias estocásticas para producción agrícola y ganadera
-trayectorias_agricultura <- generar_trayectorias(num_simulaciones, anios, production_agricultura[1], crecimiento_produccion_agricultura, sigma_emision_agricultura)
-trayectorias_ganaderia <- generar_trayectorias(num_simulaciones, anios, production_ganaderia[1], crecimiento_produccion_ganaderia, sigma_emision_ganaderia)
-trayectorias_area <- generar_trayectorias(num_simulaciones, anios, area_harvested[1], crecimiento_area, sigma_emision_area)
+# Calcular emisiones por categoría
 
-# Calcular emisiones estocásticas para cada simulación
-factor_emision_agricultura <- mean(factor_emision_agricultura_hist, na.rm = TRUE)  # kg CO2e por tonelada de producción agrícola
-factor_emision_ganaderia <- mean(factor_emision_ganaderia_hist, na.rm = TRUE)    # kg CO2e por cabeza de ganado
-factor_emision_area <- mean(factor_emision_area_hist, na.rm = TRUE)          # kg CO2e por hectárea
+# Fermentación entérica (3A1)
+emisiones_CH4_fermentacion <- poblacion_animal * factor_emision_CH4_fermentacion / 1000  # kg CH₄/año convertidos a ton
+emisiones_CO2e_fermentacion <- emisiones_CH4_fermentacion * GWP_CH4 / 1000  # Convertir a toneladas CO₂e
 
-emisiones_agricultura <- trayectorias_agricultura * factor_emision_agricultura
-emisiones_ganaderia <- trayectorias_ganaderia * factor_emision_ganaderia
-emisiones_area <- trayectorias_area * factor_emision_area
+# Gestión de estiércol (3A2)
+emisiones_CH4_estiércol <- poblacion_animal * factor_emision_CH4_estiércol  # kg CH₄/año
+emisiones_N2O_estiércol <- N_total_aplicado * factor_emision_N2O_estiércol  # kg N₂O-N/año
+emisiones_CO2e_CH4_estiércol <- emisiones_CH4_estiércol * GWP_CH4 / 1000  # Convertir CH₄ a CO₂e (toneladas)
+emisiones_CO2e_N2O_estiércol <- emisiones_N2O_estiércol * GWP_N2O / 1000  # Convertir N₂O a CO₂e (toneladas)
 
-emisiones_totales_simuladas <- emisiones_agricultura + emisiones_ganaderia + emisiones_area
+# Pastizales (3B3)
+emisiones_CO2_pastizales <- superficie_pastizales * factor_emision_CO2_pastizales  # t CO₂/año
 
-# Calcular el promedio y percentiles de las emisiones simuladas
-emisiones_promedio <- rowMeans(emisiones_totales_simuladas)
-emisiones_p5 <- apply(emisiones_totales_simuladas, 1, quantile, probs = 0.05)
-emisiones_p95 <- apply(emisiones_totales_simuladas, 1, quantile, probs = 0.95)
+# Quemado de biomasa (3C1)
+emisiones_GHG_biomasa <- superficie_cultivada * factor_emision_GHG_biomasa/1000  # t CO₂/año
 
-# Crear un data frame para las trayectorias de emisión promedio y percentiles
-trayectorias <- data.frame(
-  Año = anios,
-  Emisiones_Promedio = emisiones_promedio,
-  Emisiones_P5 = emisiones_p5,
-  Emisiones_P95 = emisiones_p95
+# Emisiones directas de N₂O de suelos gestionados (3C4)
+emisiones_N2O_suelos <- N_aplicado * factor_emision_N2O_suelos # kg N₂O-N/año
+emisiones_CO2e_N2O_suelos <- emisiones_N2O_suelos * GWP_N2O / 1000  # Convertir N₂O a CO₂e (toneladas)
+
+# Crear un dataframe con las emisiones por categoría
+data_local <- data.frame(
+  Year = years,
+  `3A1 - Fermentación entérica` = emisiones_CO2e_fermentacion,
+  `3A2 - Gestión de estiércol` = emisiones_CO2e_CH4_estiércol/1e2 + emisiones_CO2e_N2O_estiércol/1e2,
+  `3B3 - Pastizales` = emisiones_CO2_pastizales/1e2,
+  `3C1 - Emisiones de GHG por quemado de biomasa` = emisiones_GHG_biomasa/1e2,
+  `3C4 - Emisiones directas de N2O de suelos gestionados` = emisiones_CO2e_N2O_suelos/1e2
 )
 
-# Visualizar los resultados
-plot_emisiones_estocasticas <- function(data, title, subtitle, y_label) {
-  ggplot(data, aes(x = Año)) +
-    geom_line(aes(y = Emisiones_Promedio, color = "Emisiones Promedio"), size = 1) +
-    geom_ribbon(aes(ymin = Emisiones_P5, ymax = Emisiones_P95), alpha = 0.2) +
-    labs(title = title, subtitle = subtitle, x = "Año", y = y_label, color = "Escenario") +
-    theme_minimal() +
-    scale_color_manual(values = c("Emisiones Promedio" = "red"))
+# Calcular las emisiones totales por año
+data_local <- data_local %>%
+  mutate(Emisiones_Totales_Gt = rowSums(across(starts_with("3"))))
+
+# Filtrar datos para años específicos
+años_especificos <- c(2000,2005,2010,2015,2020)
+data_filtrada <- data_local %>%
+  filter(Year %in% años_especificos)
+
+# Transformar a formato largo para crear gráfico apilado
+data_long_filtrada <- data_filtrada %>%
+  pivot_longer(cols = c("X3A1...Fermentación.entérica", "X3A2...Gestión.de.estiércol", 
+                        "X3B3...Pastizales", "X3C1...Emisiones.de.GHG.por.quemado.de.biomasa", 
+                        "X3C4...Emisiones.directas.de.N2O.de.suelos.gestionados"), 
+               names_to = "Categoría", values_to = "Emisiones")
+
+# Visualización
+ggplot(data_long_filtrada, aes(x = factor(Year), y = Emisiones, fill = Categoría)) +
+  geom_bar(stat = "identity", width = 0.6) +  # Ajuste del ancho de las barras
+  geom_text(aes(label = round(Emisiones, 2)), position = position_stack(vjust = 0.5), size = 3) +  # Etiquetas en las barras
+  labs(title = "",
+       x = "Año", y = "Emisiones Totales (Gg CO2e)", fill = "Categoría") +
+  scale_fill_manual(values = c("X3A1...Fermentación.entérica" = "orange", 
+                               "X3A2...Gestión.de.estiércol" = "grey", 
+                               "X3B3...Pastizales" = "blue", 
+                               "X3C1...Emisiones.de.GHG.por.quemado.de.biomasa" = "yellow",
+                               "X3C4...Emisiones.directas.de.N2O.de.suelos.gestionados" = "green")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 360, hjust = 0.5),  # Rotar los textos del eje x
+        legend.position = "bottom")
+
+# Guardar los resultados en Excel
+
+
+#Ajustar regresión lineal para obtener tasa de crecimiento de cada variable
+
+# Población animal (Fermentación entérica)
+modelo_poblacion_animal <- lm(poblacion_animal ~ years)
+tasa_crecimiento_poblacion_animal <- coef(modelo_poblacion_animal)["years"] / mean(poblacion_animal)
+
+# N total aplicado (Gestión de estiércol)
+modelo_N_total_aplicado <- lm(N_total_aplicado ~ years)
+tasa_crecimiento_N_total_aplicado <- coef(modelo_N_total_aplicado)["years"] / mean(N_total_aplicado)
+
+# Superficie de pastizales (Pastizales)
+modelo_superficie_pastizales <- lm(superficie_pastizales ~ years)
+tasa_crecimiento_superficie_pastizales <- coef(modelo_superficie_pastizales)["years"] / mean(superficie_pastizales)
+
+# Superficie cultivada (Quemado de biomasa)
+modelo_superficie_cultivada <- lm(superficie_cultivada ~ years)
+tasa_crecimiento_superficie_cultivada <- coef(modelo_superficie_cultivada)["years"] / mean(superficie_cultivada)
+
+# N aplicado en suelos gestionados (Emisiones de N₂O suelos gestionados)
+modelo_N_aplicado <- lm(N_aplicado ~ years)
+tasa_crecimiento_N_aplicado <- coef(modelo_N_aplicado)["years"] / mean(N_aplicado)
+
+# Mostrar las tasas de crecimiento estimadas
+tasa_crecimiento_poblacion_animal
+tasa_crecimiento_N_total_aplicado
+tasa_crecimiento_superficie_pastizales
+tasa_crecimiento_superficie_cultivada
+tasa_crecimiento_N_aplicado
+
+
+# Proyección de las variables explicativas hasta 2050
+future_years <- 2000:2050
+
+# Población animal proyectada
+poblacion_animal_futuro <- predict(modelo_poblacion_animal, newdata = data.frame(years = future_years))
+
+# N total aplicado proyectado
+N_total_aplicado_futuro <- predict(modelo_N_total_aplicado, newdata = data.frame(years = future_years))
+
+# Superficie de pastizales proyectada
+superficie_pastizales_futuro <- predict(modelo_superficie_pastizales, newdata = data.frame(years = future_years))
+
+# Superficie cultivada proyectada
+superficie_cultivada_futuro <- predict(modelo_superficie_cultivada, newdata = data.frame(years = future_years))
+
+# N aplicado proyectado para suelos gestionados
+N_aplicado_futuro <- predict(modelo_N_aplicado, newdata = data.frame(years = future_years)
+
+                             
+# Extend emisiones_CO2e_N2O_suelos_futuro to match future_years
+modelo_N2O_suelos <- lm(emisiones_CO2e_N2O_suelos ~ years)
+emisiones_CO2e_N2O_suelos_futuro <- predict(modelo_N2O_suelos, newdata = data.frame(years = future_years))
+
+# Extend N_aplicado_futuro to match future_years
+modelo_N_aplicado <- lm(N_aplicado ~ years)
+N_aplicado_futuro <- predict(modelo_N_aplicado, newdata = data.frame(years = future_years))
+
+# Now check the lengths again
+length(emisiones_CO2e_N2O_suelos_futuro) # Should now be 51
+length(N_aplicado_futuro) # Should now be 51
+
+
+# Cálculo de emisiones futuras utilizando las variables proyectadas
+# Fermentación entérica (3A1) - Emisiones futuras
+emisiones_CH4_fermentacion_futuro <- poblacion_animal_futuro * factor_emision_CH4_fermentacion / 1000
+ emisiones_CO2e_fermentacion_futuro <- emisiones_CH4_fermentacion_futuro * GWP_CH4 / 1000
+                             
+# Gestión de estiércol (3A2) - Emisiones futuras
+ emisiones_CH4_estiércol_futuro <- poblacion_animal_futuro * factor_emision_CH4_estiércol
+ emisiones_N2O_estiércol_futuro <- N_total_aplicado_futuro * factor_emision_N2O_estiércol
+ emisiones_CO2e_CH4_estiércol_futuro <- emisiones_CH4_estiércol_futuro * GWP_CH4 / 1000
+ emisiones_CO2e_N2O_estiércol_futuro <- emisiones_N2O_estiércol_futuro * GWP_N2O / 1000
+                             
+# Pastizales (3B3) - Emisiones futuras
+emisiones_CO2_pastizales_futuro <- superficie_pastizales_futuro * factor_emision_CO2_pastizales
+                             
+# Quemado de biomasa (3C1) - Emisiones futuras
+ emisiones_GHG_biomasa_futuro <- superficie_cultivada_futuro * factor_emision_GHG_biomasa / 1000
+                             
+# Emisiones directas de N₂O de suelos gestionados (3C4) - Emisiones futuras
+emisiones_N2O_suelos_futuro <- N_aplicado_futuro * factor_emision_N2O_suelos
+emisiones_CO2e_N2O_suelos_futuro <- emisiones_N2O_suelos_futuro * GWP_N2O / 1000
+                             
+# Verificar las longitudes de las proyecciones
+length(future_years)
+length(emisiones_CO2e_fermentacion_futuro)
+length(emisiones_CO2e_CH4_estiércol_futuro)
+length(emisiones_CO2e_N2O_estiércol_futuro)
+length(emisiones_CO2_pastizales_futuro)
+length(emisiones_GHG_biomasa_futuro)
+length(emisiones_CO2e_N2O_suelos_futuro)
+length(poblacion_animal_futuro)
+length(N_total_aplicado_futuro)
+length(superficie_cultivada_futuro)
+length(N_aplicado_futuro)
+
+# Asegurarse de que todas las proyecciones tengan la misma longitud que 'future_years'
+if (length(emisiones_CO2e_fermentacion_futuro) != length(future_years)) {
+  emisiones_CO2e_fermentacion_futuro <- rep(emisiones_CO2e_fermentacion_futuro, length.out = length(future_years))
+}
+if (length(emisiones_CO2e_CH4_estiércol_futuro) != length(future_years)) {
+  emisiones_CO2e_CH4_estiércol_futuro <- rep(emisiones_CO2e_CH4_estiércol_futuro, length.out = length(future_years))
+}
+if (length(emisiones_CO2_pastizales_futuro) != length(future_years)) {
+  emisiones_CO2_pastizales_futuro <- rep(emisiones_CO2_pastizales_futuro, length.out = length(future_years))
+}
+if (length(emisiones_GHG_biomasa_futuro) != length(future_years)) {
+  emisiones_GHG_biomasa_futuro <- rep(emisiones_GHG_biomasa_futuro, length.out = length(future_years))
+}
+if (length(emisiones_CO2e_N2O_suelos_futuro) != length(future_years)) {
+  emisiones_CO2e_N2O_suelos_futuro <- rep(emisiones_CO2e_N2O_suelos_futuro, length.out = length(future_years))
 }
 
-plot1 <- plot_emisiones_estocasticas(trayectorias, "Trayectorias de Emisión en el Sector Agrícola (Enfoque Estocástico)", "Comparación de escenarios de mitigación hasta 2050", "Emisiones Totales de CO2 (toneladas)")
-print(plot1)
-
-#############################  Haremos un ejercicio para simular factores de reducción ########################
-
-#############################################################################################################################################
-#############################################################################################################################################
-
-
-# Factores de reducción (ejemplos)
-factor_agricultura_precision <- 0.99  # Reducción del 1%
-factor_energias_renovables <- 0.95    # Reducción del 5%
-factor_subsidios_sostenibles <- 0.97  # Reducción del 3%
-factor_regulacion_emisiones <- 0.93   # Reducción del 7%
-factor_CCS <- 0.90                    # Reducción del 10%
-otro_factor <- 0.8                    # Reducción del 20% anual
-
-# Factores combinados para escenarios
-factor_reduccion_agricultura_moderado <- factor_agricultura_precision * factor_subsidios_sostenibles
-factor_reduccion_agricultura_ambicioso <- factor_agricultura_precision * factor_subsidios_sostenibles * factor_energias_renovables * otro_factor
-
-factor_reduccion_ganaderia_moderado <- factor_regulacion_emisiones * factor_CCS
-factor_reduccion_ganaderia_ambicioso <- factor_regulacion_emisiones * factor_CCS * factor_energias_renovables
-
-factor_reduccion_area_moderado <- factor_agricultura_precision
-factor_reduccion_area_ambicioso <- factor_agricultura_precision * factor_energias_renovables
-
-# Calcular las trayectorias de emisiones para cada actividad y escenario
-calcular_trayectoria_reduccion <- function(emisiones_iniciales, factores_reduccion, anios, transicion_inicio, transicion_fin) {
-  trayectorias <- matrix(NA, nrow = length(anios), ncol = num_simulaciones)
-  trayectorias[1, ] <- emisiones_iniciales[1, ]
+# Ahora crear el dataframe asegurando que todas las columnas tengan la misma longitud
+proyeccion_BAU_futuro <- data.frame(
+  Year = future_years,
+  `3A1 - Fermentación entérica` = emisiones_CO2e_fermentacion_futuro,
+  `3A2 - Gestión de estiércol` = emisiones_CO2e_CH4_estiércol_futuro/1e2 + emisiones_CO2e_N2O_estiércol_futuro/1e2,
+  `3B3 - Pastizales` = emisiones_CO2_pastizales_futuro/1e2,
+  `3C1 - Emisiones de GHG por quemado de biomasa` = emisiones_GHG_biomasa_futuro/1e2,
+  `3C4 - Emisiones directas de N₂O de suelos gestionados` = emisiones_CO2e_N2O_suelos_futuro/1e2,
+  poblacion_animal_futuro=poblacion_animal_futuro,
+  N_total_aplicado_futuro=N_total_aplicado_futuro,
+  superficie_cultivada_futuro=superficie_cultivada_futuro,
+  N_aplicado_futuro=N_aplicado_futuro
   
-  for (i in 2:length(anios)) {
-    if (anios[i] >= transicion_inicio && anios[i] <= transicion_fin) {
-      trayectorias[i, ] <- trayectorias[i - 1, ] * factores_reduccion
-    } else if (anios[i] > transicion_fin) {
-      trayectorias[i, ] <- trayectorias[i - 1, ] * factores_reduccion
-    } else {
-      trayectorias[i, ] <- emisiones_iniciales[i, ]
-    }
-  }
-  return(trayectorias)
-}
-
-transicion_inicio <- 2025
-transicion_fin_moderado <- 2040
-transicion_fin_ambicioso <- 2050
-
-# Emisiones agrícolas
-trayectorias_agricultura_moderado <- calcular_trayectoria_reduccion(emisiones_agricultura, factor_reduccion_agricultura_moderado, anios, transicion_inicio, transicion_fin_moderado)
-trayectorias_agricultura_ambicioso <- calcular_trayectoria_reduccion(emisiones_agricultura, factor_reduccion_agricultura_ambicioso, anios, transicion_inicio, transicion_fin_ambicioso)
-
-# Emisiones ganaderas
-trayectorias_ganaderia_moderado <- calcular_trayectoria_reduccion(emisiones_ganaderia, factor_reduccion_ganaderia_moderado, anios, transicion_inicio, transicion_fin_moderado)
-trayectorias_ganaderia_ambicioso <- calcular_trayectoria_reduccion(emisiones_ganaderia, factor_reduccion_ganaderia_ambicioso, anios, transicion_inicio, transicion_fin_ambicioso)
-
-# Emisiones por área
-trayectorias_area_moderado <- calcular_trayectoria_reduccion(emisiones_area, factor_reduccion_area_moderado, anios, transicion_inicio, transicion_fin_moderado)
-trayectorias_area_ambicioso <- calcular_trayectoria_reduccion(emisiones_area, factor_reduccion_area_ambicioso, anios, transicion_inicio, transicion_fin_ambicioso)
-
-# Emisiones totales moderado
-emisiones_totales_moderado <- trayectorias_agricultura_moderado + trayectorias_ganaderia_moderado + trayectorias_area_moderado
-
-# Emisiones totales ambicioso
-emisiones_totales_ambicioso <- trayectorias_agricultura_ambicioso + trayectorias_ganaderia_ambicioso + trayectorias_area_ambicioso
-
-# Calcular el promedio y percentiles de las emisiones en los escenarios moderado y ambicioso
-emisiones_moderado_promedio <- rowMeans(emisiones_totales_moderado)
-emisiones_moderado_p5 <- apply(emisiones_totales_moderado, 1, quantile, probs = 0.05)
-emisiones_moderado_p95 <- apply(emisiones_totales_moderado, 1, quantile, probs = 0.95)
-
-emisiones_ambicioso_promedio <- rowMeans(emisiones_totales_ambicioso)
-emisiones_ambicioso_p5 <- apply(emisiones_totales_ambicioso, 1, quantile, probs = 0.05)
-emisiones_ambicioso_p95 <- apply(emisiones_totales_ambicioso, 1, quantile, probs = 0.95)
-
-# Agregar los resultados al data frame de trayectorias
-trayectorias <- trayectorias %>%
-  mutate(
-    Emisiones_Moderado_Promedio = emisiones_moderado_promedio,
-    Emisiones_Moderado_P5 = emisiones_moderado_p5,
-    Emisiones_Moderado_P95 = emisiones_moderado_p95,
-    Emisiones_Ambicioso_Promedio = emisiones_ambicioso_promedio,
-    Emisiones_Ambicioso_P5 = emisiones_ambicioso_p5,
-    Emisiones_Ambicioso_P95 = emisiones_ambicioso_p95
-  )
-
-# Visualizar los resultados
-plot_emisiones_estocasticas_con_mitigacion <- function(data, title, subtitle, y_label) {
-  ggplot(data, aes(x = Año)) +
-    geom_line(aes(y = Emisiones_Promedio, color = "Emisiones Promedio BAU"), size = 1) +
-    geom_ribbon(aes(ymin = Emisiones_P5, ymax = Emisiones_P95), alpha = 0.2, fill = "red") +
-    geom_line(aes(y = Emisiones_Moderado_Promedio, color = "Emisiones Promedio Moderado"), size = 1, linetype = "dashed") +
-    geom_ribbon(aes(ymin = Emisiones_Moderado_P5, ymax = Emisiones_Moderado_P95), alpha = 0.2, fill = "green") +
-    geom_line(aes(y = Emisiones_Ambicioso_Promedio, color = "Emisiones Promedio Ambicioso"), size = 1, linetype = "dotted") +
-    geom_ribbon(aes(ymin = Emisiones_Ambicioso_P5, ymax = Emisiones_Ambicioso_P95), alpha = 0.2, fill = "blue") +
-    scale_x_continuous(breaks = c(seq(2000, 2030, by = 5), seq(2030, 2100, by = 10))) +
-    labs(title = title, subtitle = subtitle, x = "Año", y = y_label, color = "Escenario") +
-    theme_minimal() +
-    scale_color_manual(values = c("Emisiones Promedio BAU" = "red", 
-                                  "Emisiones Promedio Moderado" = "green", 
-                                  "Emisiones Promedio Ambicioso" = "blue"))
-}
-
-plot3 <- plot_emisiones_estocasticas_con_mitigacion(trayectorias, "Trayectorias de Emisión en el Sector Agrícola", "Comparación de escenarios de mitigación hasta 2050", "Emisiones Totales de CO2 (toneladas)")
-print(plot3)
-
-##################################################################################################################################################
+)
+                             
+# Calcular las emisiones totales proyectadas
+proyeccion_BAU_futuro <- proyeccion_BAU_futuro %>%
+mutate(Emisiones_Totales_Gt = rowSums(across(starts_with("3"))))
 
 
-################ Modulo de coste beneficios #######################################################
+# Filtrar para años específicos
+años_especificos_futuro <- c(2018, 2025, 2030, 2040, 2050)
+data_filtrada_futuro <- proyeccion_BAU_futuro %>%
+  filter(Year %in% años_especificos_futuro)
 
-####### Estos no son datos reales, hay que discutirlo en taller 
+# Transformar los datos a formato largo para visualización
+data_long_filtrada_futuro <- data_filtrada_futuro %>%
+  pivot_longer(cols = c("X3A1...Fermentación.entérica", "X3A2...Gestión.de.estiércol", 
+                        "X3B3...Pastizales", "X3C1...Emisiones.de.GHG.por.quemado.de.biomasa", 
+                        "X3C4...Emisiones.directas.de.N.O.de.suelos.gestionados"), 
+               names_to = "Categoría", values_to = "Emisiones")
 
-# Definir los costos y beneficios (ejemplo en Lempiras)
-costo_agricultura_precision <- 200000000  # Costo de implementar agricultura de precisión
-costo_energias_renovables <- 1500000000    # Costo de implementar energías renovables
-costo_subsidios_sostenibles <- 5000000   # Costo de subsidios sostenibles
-costo_regulacion_emisiones <- 80000000    # Costo de regulaciones de emisiones
-costo_CCS <- 200000000                    # Costo de captura y almacenamiento de carbono
+# Visualización del escenario futuro
+ggplot(data_long_filtrada_futuro, aes(x = factor(Year), y = Emisiones, fill = Categoría)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = round(Emisiones, 2)), position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "",
+       x = "Año", y = "Emisiones Totales (Gg CO2e)", fill = "Categoría") +
+  scale_fill_manual(values = c("X3A1...Fermentación.entérica" = "orange", 
+                               "X3A2...Gestión.de.estiércol" = "grey", 
+                               "X3B3...Pastizales" = "blue", 
+                               "X3C1...Emisiones.de.GHG.por.quemado.de.biomasa" = "yellow",
+                               "X3C4...Emisiones.directas.de.N.O.de.suelos.gestionados" = "green")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 360, hjust = 0.5),
+        legend.position = "bottom")
 
-beneficio_emisiones_reducidas <- function(emisiones_reducidas, precio_carbono) {
-  return(emisiones_reducidas * precio_carbono)
-}
 
-precio_carbono <- 5000  # Precio del carbono en Lempiras por tonelada
 
-# Calcular las emisiones reducidas para cada escenario
-emisiones_reducidas_moderado <- emisiones_totales_simuladas - emisiones_totales_moderado
-emisiones_reducidas_ambicioso <- emisiones_totales_simuladas - emisiones_totales_ambicioso
+write.xlsx(proyeccion_BAU_futuro, "C:/Users/DEES-JULIO/Desktop/GIZ/Agricultura/Emisiones_BAU_Agricultura.xlsx", row.names = FALSE)
 
-# Calcular los beneficios de las emisiones reducidas
-beneficios_moderado <- beneficio_emisiones_reducidas(emisiones_reducidas_moderado, precio_carbono)
-beneficios_ambicioso <- beneficio_emisiones_reducidas(emisiones_reducidas_ambicioso, precio_carbono)
 
-# Crear un vector de costos que sean cero antes del 2025
-costos_moderado <- rep(0, length(anios))
-costos_ambicioso <- rep(0, length(anios))
 
-costos_moderado[anios >= 2025] <- costo_agricultura_precision + costo_subsidios_sostenibles
-costos_ambicioso[anios >= 2025] <- costo_agricultura_precision + costo_subsidios_sostenibles + costo_energias_renovables + costo_CCS
 
-# Calcular los beneficios netos
-beneficio_neto_moderado <- rowMeans(beneficios_moderado) - costos_moderado
-beneficio_neto_ambicioso <- rowMeans(beneficios_ambicioso) - costos_ambicioso
 
-# Agregar los resultados al data frame de trayectorias
-trayectorias <- trayectorias %>%
-  mutate(
-    Beneficio_Neto_Moderado = beneficio_neto_moderado,
-    Beneficio_Neto_Ambicioso = beneficio_neto_ambicioso
-  )
 
-# Visualizar los resultados de coste-beneficio
-plot_coste_beneficio <- function(data, title, subtitle, y_label) {
-  ggplot(data, aes(x = Año)) +
-    geom_line(aes(y = Beneficio_Neto_Moderado, color = "Beneficio Neto Moderado"), size = 1) +
-    geom_line(aes(y = Beneficio_Neto_Ambicioso, color = "Beneficio Neto Ambicioso"), size = 1, linetype = "dashed") +
-    labs(title = title, subtitle = subtitle, x = "Año", y = y_label, color = "Escenario") +
-    theme_minimal() +
-    scale_y_continuous(labels = scales::comma) +
-    scale_color_manual(values = c("Beneficio Neto Moderado" = "green", 
-                                  "Beneficio Neto Ambicioso" = "blue"))
-}
+##### Descripción de variables
 
-plot4 <- plot_coste_beneficio(trayectorias, "Análisis de Coste-Beneficio en el Sector Agrícola", "Comparación de escenarios de mitigación hasta 2050", "Beneficio Neto (Lempiras)")
-print(plot4)
+descriptivos <- read_excel("C:/Users/DEES-JULIO/Desktop/GIZ/descriptivos.xlsx", sheet = "Hoja16")
+
+# Convertir Year a numérico
+descriptivos$Year <- as.numeric(descriptivos$Year)
+
+# Asegurarse de que "Categorías de emisiones" es un factor
+descriptivos$Categorías <- as.factor(descriptivos$Categorías)
+
+
+
+# Crear el gráfico de barras apiladas con etiquetas en cada barra y leyenda debajo
+ggplot(descriptivos, aes(x = Year, y = emisiones_totales, fill = Categorías)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = round(emisiones_totales, 1)), 
+            position = position_stack(vjust = 0.5), size = 3) +  # Etiquetas centradas en las barras
+  labs(title = "Emisiones agricultura y ganadería",
+       x = "Año",
+       y = "Emisiones Totales (Gg CO2e)",
+       fill = "Sector") +
+  theme_minimal() +
+  theme(legend.position = "bottom")  # Coloca la leyenda debajo del gráfico
 
 
 
